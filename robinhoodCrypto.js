@@ -59,14 +59,18 @@ class RobinhoodCrypto {
 
     // Fetches trading pairs for specified symbols
     async getTradingPairs(symbols = []) {
-        const query = symbols.length
-            ? '?symbol=' + symbols.join('&symbol=')
-            : '';
-        return await this.makeRequest(
-            'GET',
-            `/api/v1/crypto/trading/trading_pairs/${query}`
-        );
+        const query = symbols.length ? '?symbol=' + symbols.join('&symbol=') : '';
+        const response = await this.makeRequest('GET', `/api/v1/crypto/trading/trading_pairs/${query}`);
+    
+        if (response && Array.isArray(response.results)) {
+            console.log("Available symbols:", response.results.map(pair => pair.symbol)); // Log available symbols
+            return response;
+        } else {
+            console.error("Error fetching trading pairs or unexpected response format:", response);
+            return null;
+        }
     }
+    
 
     // Fetches holdings for specified asset codes
     async getHoldings(assetCodes = []) {

@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const RobinhoodCrypto = require('./robinhoodCrypto');
 const { v4: uuidv4 } = require('uuid');
 const http = require('http');
@@ -11,55 +12,67 @@ const server = http.createServer(app);
 const io = socketIo(server);
 const robinhood = new RobinhoodCrypto();
 
-// Set up EJS as the templating engine
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
-// In-memory storage for the last 2 hours of price data
-const priceData = [];
+const PRICE_DATA_FILE = 'priceData.json';
+const SYMBOLS = ['BTC-USD', 'ETH-USD', 'DOGE-USD', 'SHIB-USD', 'ETC-USD'];
 
-// Fetch and broadcast prices and holdings every 10 seconds
-async function fetchPricesAndHoldings() {
+// Route for home page
+app.get('/', (req, res) => {
+    res.render('index', { title: 'Crypto Trading App' });
+});
+
+// Load existing data from file
+function loadPriceData() {
     try {
-        const symbols = ['BTC-USD', 'ETH-USD', 'DOGE-USD', 'SHIB-USD', 'ETC-USD', 'USDC-USD'];
-        
-        // Fetch best bid/ask prices
-        const bidAskData = await robinhood.getBestBidAsk(symbols);
-        
+        if (fs.existsSync(PRICE_DATA_FILE)) {
+            const data = fs.readFileSync(PRICE_DATA_FILE, 'utf8');
+            return data ? JSON.parse(data) : [];
+        }
+    } catch (error) {
+        console.error('Error loading price data:', error);
+    }
+    return [];
+}
+
+// Save price data to file
+function savePriceData(data) {
+    fs.writeFileSync(PRICE_DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+// In-memory storage loaded from the file
+let priceData = loadPriceData();
+console.log(`Loaded price data points on startup: ${priceData.length}`);
+setInterval(() => savePriceData(priceData), 5 * 60 * 1000);
+
+// Fetch and broadcast stats and docs every second
+async function fetchStatsAndDocs() {
+    try {
+        const bidAskData = await robinhood.getBestBidAsk(SYMBOLS);
         if (!Array.isArray(bidAskData)) {
             console.error('Expected bidAskData to be an array, but got:', bidAskData);
             return;
         }
 
+        const newPriceData = [];
         const prices = {};
         const detailedPrices = {};
-
-        // Store fetched data for analysis
         const timestamp = new Date();
+
         bidAskData.forEach(data => {
             const assetCode = data.symbol;
             const currentPrice = parseFloat(data.price);
             if (!isNaN(currentPrice)) {
                 prices[assetCode] = currentPrice;
-                detailedPrices[assetCode] = {
-                    ...data,
-                    price: currentPrice
-                };
-
-                // Add entry to priceData for analysis
-                priceData.push({ timestamp, symbol: assetCode, price: currentPrice });
-            } else {
-                console.error(`No valid price found for ${assetCode}`, data);
+                detailedPrices[assetCode] = { ...data, price: currentPrice };
+                newPriceData.push({ timestamp, symbol: assetCode, price: currentPrice });
             }
         });
 
-        // Keep only the last 2 hours of data
-        const cutoffTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
-        while (priceData.length > 0 && priceData[0].timestamp < cutoffTime) {
-            priceData.shift();
-        }
+        priceData = priceData.concat(newPriceData);
+        savePriceData(priceData);
 
-        // Fetch holdings
         const holdingsData = await robinhood.getHoldings();
         if (!holdingsData || !Array.isArray(holdingsData.results)) {
             console.error("Error fetching holdings or unexpected response format:", holdingsData);
@@ -70,7 +83,6 @@ async function fetchPricesAndHoldings() {
             const assetCode = holding.asset_code + '-USD';
             const quantity = parseFloat(holding.total_quantity);
             const usdValue = quantity * (prices[assetCode] || 0);
-
             return {
                 asset_code: holding.asset_code,
                 total_quantity: quantity,
@@ -79,36 +91,116 @@ async function fetchPricesAndHoldings() {
             };
         });
 
-        // Generate recommendations based on the stored price data
-        const recommendations = analyzeDataForDecision();
-
-        console.log('Emitting updateHoldings with data:', holdings, 'and recommendations:', recommendations);
-        io.emit('updateHoldings', { holdings, recommendations });
+        // Emit holdings data every second
+        io.emit('updateHoldings', { holdings });
     } catch (error) {
-        console.error('Error fetching prices and holdings:', error);
+        console.error('Error fetching stats and docs:', error);
     }
 }
 
-// Analysis function to generate buy/sell recommendations
+function fetchPredictionsAndActions() {
+    const recommendations = analyzeDataForDecision();
+    // Emit recommendations data every 30 seconds
+    io.emit('updateRecommendations', recommendations);
+}
+function placeOrder(event, symbol, action, currencyType) {
+    event.preventDefault();
+    const amountElement = document.getElementById(`${action}-amount-${symbol}`);
+    const amountInUSD = parseFloat(amountElement.value);
+
+    // Convert USD to asset quantity based on the current price
+    fetch(`/current-price?symbol=${symbol}`)
+        .then(response => response.json())
+        .then(data => {
+            const currentPrice = data.price;
+            const assetQuantity = amountInUSD / currentPrice;
+
+            // Send the order in quantity terms
+            fetch('/place-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    symbol: `${symbol}-USD`,
+                    action,
+                    amount: assetQuantity.toFixed(6) 
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Order placed successfully!');
+                } else {
+                    alert('Failed to place order.');
+                }
+            })
+            .catch(error => console.error('Error placing order:', error));
+        })
+        .catch(error => console.error('Error fetching current price:', error));
+}
+
+app.get('/current-price', async (req, res) => {
+    const { symbol } = req.query;
+    const bidAskData = await robinhood.getBestBidAsk([symbol]);
+    const currentPrice = bidAskData[0]?.price || null;
+    res.json({ price: currentPrice });
+});
+// Adjusted analyzeDataForDecision function to log conditionally triggered paths
 function analyzeDataForDecision() {
     const recommendations = {};
-    priceData.forEach(({ symbol }) => {
-        const lastPrices = priceData.filter(data => data.symbol === symbol).map(data => data.price);
-        const movingAverage15 = calculateMovingAverage(lastPrices, 15);
-        const movingAverage120 = calculateMovingAverage(lastPrices, 120);
-        const latestPrice = lastPrices[lastPrices.length - 1];
-        const rsi = calculateRSI(lastPrices);
+    const cutoffTime = new Date(Date.now() - 2 * 60 * 60 * 1000); // Last 2 hours
 
-        // Decision-making based on rules
-        if (latestPrice > movingAverage15 && latestPrice > movingAverage120 && rsi < 30) {
-            recommendations[symbol] = 'buy';
-        } else if (latestPrice < movingAverage15 && rsi > 70) {
-            recommendations[symbol] = 'sell';
+    SYMBOLS.forEach(symbol => {
+        const lastPrices = priceData
+            .filter(data => data.symbol === symbol && data.timestamp >= cutoffTime)
+            .map(data => data.price);
+
+        console.log(`Symbol: ${symbol}, Price Data Points: ${lastPrices.length}`);
+
+        if (lastPrices.length < 30) return;
+
+        const latestPrice = lastPrices[lastPrices.length - 1];
+        const shortTermAvg = calculateMovingAverage(lastPrices, 5);
+        const longTermAvg = calculateMovingAverage(lastPrices, 30);
+        const rsi = calculateRSI(lastPrices);
+        const recentVolatility = calculateStandardDeviation(lastPrices.slice(-5));
+
+        let action, prediction;
+        const changeThreshold = 0.0002 * latestPrice;
+
+        if (latestPrice > shortTermAvg && recentVolatility < changeThreshold) {
+            console.log(`Symbol ${symbol}: Buy triggered by stable upward trend`);
+            action = 'buy';
+            prediction = 'Stable upward trend with low volatility';
+        } else if (latestPrice < shortTermAvg && recentVolatility < changeThreshold) {
+            console.log(`Symbol ${symbol}: Sell triggered by stable downward trend`);
+            action = 'sell';
+            prediction = 'Stable downward trend with low volatility';
+        } else if (rsi < 30) {
+            console.log(`Symbol ${symbol}: Buy triggered by oversold condition`);
+            action = 'buy';
+            prediction = 'Oversold condition - potential upward reversal';
+        } else if (rsi > 70) {
+            console.log(`Symbol ${symbol}: Sell triggered by overbought condition`);
+            action = 'sell';
+            prediction = 'Overbought condition - potential downward reversal';
         } else {
-            recommendations[symbol] = 'hold';
+            console.log(`Symbol ${symbol}: Hold triggered by uncertain trend`);
+            action = 'hold';
+            prediction = 'Uncertain trend, hold position';
         }
+
+        recommendations[symbol] = { action, prediction };
     });
+
+    console.log("Emitting recommendations to front end:", recommendations);
     return recommendations;
+}
+
+// Helper function to calculate standard deviation for volatility measurement
+function calculateStandardDeviation(data) {
+    const mean = data.reduce((acc, value) => acc + value, 0) / data.length;
+    const variance = data.reduce((acc, value) => acc + Math.pow(value - mean, 2), 0) / data.length;
+    return Math.sqrt(variance);
 }
 
 // Helper functions for moving average and RSI calculation
@@ -132,18 +224,50 @@ function calculateRSI(data) {
     return 100 - (100 / (1 + rs));
 }
 
-// Place Order endpoint
-app.post('/place-order', express.urlencoded({ extended: true }), async (req, res) => {
-    const { symbol, action, amount } = req.body; // action: 'buy' or 'sell'
-    
+function calculateTrend(data) {
+    const [first, ...rest] = data;
+    const increasing = rest.every((price, i) => price > data[i]);
+    const decreasing = rest.every((price, i) => price < data[i]);
+
+    if (increasing) return 'up';
+    if (decreasing) return 'down';
+    return 'sideways';
+}
+
+// Place Order endpoint with success/failure page rendering
+app.post('/place-order', express.json(), async (req, res) => {
+    const { symbol, action, amount } = req.body;
+
+    const tradingPairs = await robinhood.getTradingPairs();
+    const availableSymbols = tradingPairs.results.map(pair => pair.symbol);
+
+    if (!availableSymbols.includes(symbol)) {
+        return res.render('order-failure', { title: 'Order Failed', message: `Trading pair for symbol "${symbol}" could not be found.` });
+    }
+
+    let config;
+    if (action === 'buy') {
+        config = { asset_quantity: amount.toString() };
+    } else if (action === 'sell') {
+        const currentPriceData = await robinhood.getBestBidAsk([symbol]);
+        let limitPrice = currentPriceData[0]?.price || 1;
+        limitPrice = parseFloat(limitPrice).toFixed(6);
+        config = { asset_quantity: amount.toString(), limit_price: limitPrice };
+    } else {
+        return res.render('order-failure', { title: 'Order Failed', message: 'Invalid action specified.' });
+    }
+
     const orderType = action === 'buy' ? 'market' : 'limit';
-    const config = action === 'buy' ? { asset_quantity: amount.toString() } : { limit_price: amount.toString() };
+
     const order = await robinhood.placeOrder(uuidv4(), action, orderType, symbol, config);
-    
-    res.json(order ? { success: true, order } : { success: false, error: 'Order failed' });
+
+    if (order) {
+        res.render('order-success', { title: 'Order Placed', order });
+    } else {
+        res.render('order-failure', { title: 'Order Failed', message: 'Not enough buying power or other issue.' });
+    }
 });
 
-// Cancel order route
 app.get('/cancel-order', (req, res) => {
     res.render('cancel-order', { title: 'Cancel Order' });
 });
@@ -154,38 +278,32 @@ app.post('/cancel-order', express.urlencoded({ extended: true }), async (req, re
     res.render(cancelResult ? 'order-success' : 'order-failure', { title: cancelResult ? 'Order Canceled' : 'Order Cancellation Failed', message: cancelResult ? 'Order canceled successfully.' : 'Invalid order ID or other issue.' });
 });
 
-// Run fetchPricesAndHoldings every 10 seconds
-setInterval(fetchPricesAndHoldings, 1000);
+// Scheduling intervals for fetch functions
+setInterval(fetchStatsAndDocs, 1000);        // stats and docs update every second
+setInterval(fetchPredictionsAndActions, 14000); // predictions and actions update every 30 seconds
 
-// Socket.IO connection
 io.on('connection', (socket) => {
     console.log('New client connected');
-    fetchPricesAndHoldings(); // Send initial data on connection
-
-    socket.on('disconnect', () => {
-        console.log('Client disconnected');
-    });
+    fetchStatsAndDocs();
+    fetchPredictionsAndActions();
+    socket.on('disconnect', () => console.log('Client disconnected'));
 });
 
-// Account route
 app.get('/account', async (req, res) => {
     const accountInfo = await robinhood.getAccount();
     res.render('account', { title: 'Account Information', accountInfo });
 });
 
-// Trading pairs route
 app.get('/trading-pairs', async (req, res) => {
     const tradingPairs = await robinhood.getTradingPairs(['BTC-USD', 'ETH-USD']);
     res.render('trading-pairs', { title: 'Trading Pairs', tradingPairs: tradingPairs.results });
 });
 
-// Holdings route
 app.get('/holdings', async (req, res) => {
     const holdings = await robinhood.getHoldings();
     res.render('holdings', { title: 'Holdings', holdings: holdings.results });
 });
 
-// Place order route (GET)
 app.get('/place-order', async (req, res) => {
     const tradingPairsResponse = await robinhood.getTradingPairs();
     const tradingPairs = tradingPairsResponse.results.filter(pair => pair.quote_code === 'USD');

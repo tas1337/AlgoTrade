@@ -8,79 +8,80 @@
     <script>
         document.addEventListener("DOMContentLoaded", () => {
             const socket = io();
-
-            // Listen for updates to holdings data from the server
+    
+            // Listen for holdings updates every second
             socket.on('updateHoldings', (data) => {
-                const holdingsList = document.getElementById('holdings-list');
-                holdingsList.innerHTML = ''; // Clear current holdings
-
-                // Populate list with updated holdings data and recommendations
+                console.log("Received holdings from server:", data); // Log holdings for verification
+    
                 data.holdings.forEach(holding => {
+                    const assetCode = holding.asset_code;
+                    const listItem = document.getElementById(`holding-${assetCode}`);
+    
                     const details = holding.detailed_info || {};
-                    const recommendation = data.recommendations[holding.asset_code + '-USD'] || 'hold';
-
-                    const listItem = document.createElement('li');
-                    listItem.innerHTML = `
-                        <strong>Asset:</strong> ${holding.asset_code} <br>
-                        <strong>Quantity:</strong> ${holding.total_quantity} <br>
-                        <strong>Value in USD:</strong> $${holding.usd_value} <br>
-                        <strong>Recommendation:</strong> ${recommendation.toUpperCase()} <br>
-                        <strong>Details:</strong> <br>
-                        - Symbol: ${details.symbol || 'N/A'} <br>
-                        - Price: $${details.price || 'N/A'} <br>
-                        - Bid (inc. sell spread): $${details.bid_inclusive_of_sell_spread || 'N/A'} <br>
-                        - Ask (inc. buy spread): $${details.ask_inclusive_of_buy_spread || 'N/A'} <br>
-                        
-                        <form onsubmit="placeOrder(event, '${holding.asset_code}', '${recommendation}')">
-                            <label for="amount">Amount:</label>
-                            <input type="number" id="amount-${holding.asset_code}" step="any" required>
-                            <button type="submit">${recommendation === 'buy' ? 'Buy' : 'Sell'}</button>
-                        </form>
-                    `;
-                    holdingsList.appendChild(listItem);
+                    if (listItem) {
+                        listItem.querySelector('.quantity').textContent = holding.total_quantity;
+                        listItem.querySelector('.value-usd').textContent = `$${holding.usd_value || 'Loading...'}`;
+                        listItem.querySelector('.details-symbol').textContent = details.symbol || 'N/A';
+                        listItem.querySelector('.details-price').textContent = `$${details.price || 'N/A'}`;
+                        listItem.querySelector('.details-bid').textContent = `$${details.bid_inclusive_of_sell_spread || 'N/A'}`;
+                        listItem.querySelector('.details-ask').textContent = `$${details.ask_inclusive_of_buy_spread || 'N/A'}`;
+                    }
                 });
             });
-
-            // Function to place an order
-            async function placeOrder(event, symbol, action) {
-                event.preventDefault();
-                const amountInput = document.getElementById(`amount-${symbol}`);
-                const amount = parseFloat(amountInput.value);
-                
-                const response = await fetch('/place-order', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ symbol, action, amount })
+    
+            // Listen for recommendations updates every 30 seconds
+            socket.on('updateRecommendations', (recommendations) => {
+                console.log("Received recommendations from server:", recommendations); // Log recommendations for verification
+    
+                Object.keys(recommendations).forEach(symbol => {
+                    const assetCode = symbol.split('-')[0];
+                    const listItem = document.getElementById(`holding-${assetCode}`);
+    
+                    const action = recommendations[symbol].action.toUpperCase();
+                    const prediction = recommendations[symbol].prediction;
+    
+                    if (listItem) {
+                        listItem.querySelector('.recommendation').textContent = action;
+                        listItem.querySelector('.prediction').textContent = prediction;
+                    }
                 });
-                
-                const result = await response.json();
-                if (result.success) {
-                    alert(`Order successful: ${action.toUpperCase()} ${amount} of ${symbol}`);
-                } else {
-                    alert(`Order failed: ${result.error}`);
-                }
-            }
+            });
         });
     </script>
+    
 </head>
 <body>
     <h1><%= title %></h1>
     <ul id="holdings-list">
-        <!-- Initial rendering from server-side data -->
         <% holdings.forEach(holding => { %>
-            <li>
+            <li id="holding-<%= holding.asset_code %>">
                 <strong>Asset:</strong> <%= holding.asset_code %> <br>
-                <strong>Quantity:</strong> <%= holding.total_quantity %> <br>
-                <strong>Value in USD:</strong> Loading... <br>
-                <strong>Recommendation:</strong> Loading... <br>
+                <strong>Quantity:</strong> <span class="quantity"><%= holding.total_quantity %></span> <br>
+                <strong>Value in USD:</strong> <span class="value-usd">Loading...</span> <br>
+                <strong>Recommendation:</strong> <span class="recommendation">Loading...</span> <br>
+                <strong>Prediction:</strong> <span class="prediction">Loading...</span> <br>
+                <strong>Details:</strong> <br>
+                - Symbol: <span class="details-symbol">N/A</span> <br>
+                - Price: <span class="details-price">Loading...</span> <br>
+                - Bid (inc. sell spread): <span class="details-bid">Loading...</span> <br>
+                - Ask (inc. buy spread): <span class="details-ask">Loading...</span> <br>
+
+                <!-- Buy Form -->
                 <form onsubmit="placeOrder(event, '<%= holding.asset_code %>', 'buy')">
-                    <label for="amount">Amount:</label>
-                    <input type="number" id="amount-<%= holding.asset_code %>" step="any" required>
+                    <label for="buy-amount-<%= holding.asset_code %>">Buy Amount:</label>
+                    <input type="number" id="buy-amount-<%= holding.asset_code %>" step="any" required>
                     <button type="submit">Buy</button>
+                </form>
+
+                <!-- Sell Form -->
+                <form onsubmit="placeOrder(event, '<%= holding.asset_code %>', 'sell')">
+                    <label for="sell-amount-<%= holding.asset_code %>">Sell Amount:</label>
+                    <input type="number" id="sell-amount-<%= holding.asset_code %>" step="any" required>
+                    <button type="submit">Sell</button>
                 </form>
             </li>
         <% }) %>
     </ul>
     <a href="/">Go back</a>
 </body>
-</html>
+</html
