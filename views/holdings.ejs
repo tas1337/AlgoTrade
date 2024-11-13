@@ -11,7 +11,7 @@
     
             // Listen for holdings updates every second
             socket.on('updateHoldings', (data) => {
-                console.log("Received holdings from server:", data); // Log holdings for verification
+                // console.log("Received holdings from server:", data); // Log holdings for verification
     
                 data.holdings.forEach(holding => {
                     const assetCode = holding.asset_code;
