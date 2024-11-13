@@ -1,0 +1,12 @@
+<h1><%= title %></h1>
+<ul>
+    <% tradingPairs.forEach(pair => { %>
+        <li>
+            Symbol: <%= pair.symbol %> <br>
+            Status: <%= pair.status %> <br>
+            Min Order Size: <%= pair.min_order_size %> <br>
+            Max Order Size: <%= pair.max_order_size %>
+        </li>
+    <% }) %>
+</ul>
+<a href="/">Go back</a>

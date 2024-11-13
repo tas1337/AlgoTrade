@@ -1,0 +1,10 @@
+<h1><%= title %></h1>
+<ul>
+    <% holdings.forEach(holding => { %>
+        <li>
+            Asset: <%= holding.asset_code %> <br>
+            Quantity: <%= parseFloat(holding.total_quantity).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) %>
+        </li>
+    <% }) %>
+</ul>
+<a href="/">Go back</a>
