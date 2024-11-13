@@ -9,13 +9,11 @@ class RobinhoodCrypto {
     constructor() {
         this.apiKey = API_KEY;
 
-        // Decode the private key and validate its length
         const privateKeyBuffer = base64.toByteArray(BASE64_PRIVATE_KEY);
         if (privateKeyBuffer.length !== 64) {
             throw new Error('Invalid private key length: must be exactly 64 bytes.');
         }
 
-        // Use the entire 64-byte secret key directly
         this.privateKey = privateKeyBuffer;
     }
 
@@ -27,7 +25,6 @@ class RobinhoodCrypto {
         const timestamp = this.getCurrentTimestamp();
         const message = `${this.apiKey}${timestamp}${path}${method}${body}`;
 
-        // Sign the message using the 64-byte private key
         const signedMessage = nacl.sign.detached(
             Buffer.from(message),
             this.privateKey
@@ -55,31 +52,52 @@ class RobinhoodCrypto {
         }
     }
 
-    getAccount() {
-        return this.makeRequest('GET', '/api/v1/crypto/trading/accounts/');
+    // Fetches the account information
+    async getAccount() {
+        return await this.makeRequest('GET', '/api/v1/crypto/trading/accounts/');
     }
 
-    getTradingPairs(symbols = []) {
+    // Fetches trading pairs for specified symbols
+    async getTradingPairs(symbols = []) {
         const query = symbols.length
             ? '?symbol=' + symbols.join('&symbol=')
             : '';
-        return this.makeRequest(
+        return await this.makeRequest(
             'GET',
             `/api/v1/crypto/trading/trading_pairs/${query}`
         );
     }
 
-    getHoldings(assetCodes = []) {
+    // Fetches holdings for specified asset codes
+    async getHoldings(assetCodes = []) {
         const query = assetCodes.length
             ? '?asset_code=' + assetCodes.join('&asset_code=')
             : '';
-        return this.makeRequest(
+        return await this.makeRequest(
             'GET',
             `/api/v1/crypto/trading/holdings/${query}`
         );
     }
 
-    placeOrder(clientOrderId, side, orderType, symbol, config) {
+    // Fetches the best bid and ask prices for given symbols
+    async getBestBidAsk(symbols) {
+        const params = symbols.map(symbol => `symbol=${symbol}`).join('&');
+        const path = `/api/v1/crypto/marketdata/best_bid_ask/?${params}`;
+
+        const response = await this.makeRequest('GET', path);
+
+        // Debug log to inspect the API response format
+        // console.log("getBestBidAsk response:", response);
+
+        if (response && Array.isArray(response.results)) {
+            return response.results;
+        } else {
+            console.error("Error fetching best bid/ask data or unexpected response format:", response);
+            return [];
+        }
+    } 
+    // Places an order with specified parameters
+    async placeOrder(clientOrderId, side, orderType, symbol, config) {
         const path = '/api/v1/crypto/trading/orders/';
         const body = JSON.stringify({
             client_order_id: clientOrderId,
@@ -87,12 +105,13 @@ class RobinhoodCrypto {
             type: orderType,
             symbol,
             [`${orderType}_order_config`]: config,
-        }); 
-        return this.makeRequest('POST', path, body);
+        });
+        return await this.makeRequest('POST', path, body);
     }
 
-    cancelOrder(orderId) {
-        return this.makeRequest(
+    // Cancels an order by ID
+    async cancelOrder(orderId) {
+        return await this.makeRequest(
             'POST',
             `/api/v1/crypto/trading/orders/${orderId}/cancel/`
         );

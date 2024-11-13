@@ -1,10 +1,86 @@
-<h1><%= title %></h1>
-<ul>
-    <% holdings.forEach(holding => { %>
-        <li>
-            Asset: <%= holding.asset_code %> <br>
-            Quantity: <%= parseFloat(holding.total_quantity).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) %>
-        </li>
-    <% }) %>
-</ul>
-<a href="/">Go back</a>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const socket = io();
+
+            // Listen for updates to holdings data from the server
+            socket.on('updateHoldings', (data) => {
+                const holdingsList = document.getElementById('holdings-list');
+                holdingsList.innerHTML = ''; // Clear current holdings
+
+                // Populate list with updated holdings data and recommendations
+                data.holdings.forEach(holding => {
+                    const details = holding.detailed_info || {};
+                    const recommendation = data.recommendations[holding.asset_code + '-USD'] || 'hold';
+
+                    const listItem = document.createElement('li');
+                    listItem.innerHTML = `
+                        <strong>Asset:</strong> ${holding.asset_code} <br>
+                        <strong>Quantity:</strong> ${holding.total_quantity} <br>
+                        <strong>Value in USD:</strong> $${holding.usd_value} <br>
+                        <strong>Recommendation:</strong> ${recommendation.toUpperCase()} <br>
+                        <strong>Details:</strong> <br>
+                        - Symbol: ${details.symbol || 'N/A'} <br>
+                        - Price: $${details.price || 'N/A'} <br>
+                        - Bid (inc. sell spread): $${details.bid_inclusive_of_sell_spread || 'N/A'} <br>
+                        - Ask (inc. buy spread): $${details.ask_inclusive_of_buy_spread || 'N/A'} <br>
+                        
+                        <form onsubmit="placeOrder(event, '${holding.asset_code}', '${recommendation}')">
+                            <label for="amount">Amount:</label>
+                            <input type="number" id="amount-${holding.asset_code}" step="any" required>
+                            <button type="submit">${recommendation === 'buy' ? 'Buy' : 'Sell'}</button>
+                        </form>
+                    `;
+                    holdingsList.appendChild(listItem);
+                });
+            });
+
+            // Function to place an order
+            async function placeOrder(event, symbol, action) {
+                event.preventDefault();
+                const amountInput = document.getElementById(`amount-${symbol}`);
+                const amount = parseFloat(amountInput.value);
+                
+                const response = await fetch('/place-order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol, action, amount })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert(`Order successful: ${action.toUpperCase()} ${amount} of ${symbol}`);
+                } else {
+                    alert(`Order failed: ${result.error}`);
+                }
+            }
+        });
+    </script>
+</head>
+<body>
+    <h1><%= title %></h1>
+    <ul id="holdings-list">
+        <!-- Initial rendering from server-side data -->
+        <% holdings.forEach(holding => { %>
+            <li>
+                <strong>Asset:</strong> <%= holding.asset_code %> <br>
+                <strong>Quantity:</strong> <%= holding.total_quantity %> <br>
+                <strong>Value in USD:</strong> Loading... <br>
+                <strong>Recommendation:</strong> Loading... <br>
+                <form onsubmit="placeOrder(event, '<%= holding.asset_code %>', 'buy')">
+                    <label for="amount">Amount:</label>
+                    <input type="number" id="amount-<%= holding.asset_code %>" step="any" required>
+                    <button type="submit">Buy</button>
+                </form>
+            </li>
+        <% }) %>
+    </ul>
+    <a href="/">Go back</a>
+</body>
+</html>
